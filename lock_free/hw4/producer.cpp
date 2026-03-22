@@ -7,8 +7,11 @@ int main() {
     uint32_t type = 10;
     std::string msg = "Hello world!";
     while(true) {
-        mq.Send(type, msg.c_str(), msg.size() + 1);
-        std::cout << "Отправлено: " << msg << std::endl;
+        if (mq.Send(type, msg.c_str(), msg.size() + 1)) {
+            std::cout << "Отправлено: " << msg << std::endl;
+        } else {
+            std::cerr << "Очередь переполнена!" << std::endl;
+        }
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
     return 0;

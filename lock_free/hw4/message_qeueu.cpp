@@ -31,10 +31,8 @@ MessageQueue::MessageQueue(bool producer, size_t buffer_size) : m_producer(produ
         m_data->head.store(0);
         m_data->tail.store(0);
         m_data->ready_tail.store(0);
-        m_sem = sem_open(SEM_NAME, O_CREAT, 0666, 0);
-    } else {
-        if (m_data->version != PROTOCOL_VERSION) throw std::runtime_error("Version mismatch");
-        m_sem = sem_open(SEM_NAME, 0);
+    } else if (m_data->version != PROTOCOL_VERSION) {
+        throw std::runtime_error("Неверная версия");
     }
     close(shm_fd);
 }
@@ -57,39 +55,34 @@ bool MessageQueue::Send(uint32_t type, const void* data, uint32_t len) {
     std::memcpy(m_buffer + offset + sizeof(header), data, len);
     while (m_data->ready_tail.load(std::memory_order_acquire) != curr_tail) {}
     m_data->ready_tail.store(next_tail, std::memory_order_release);
-    sem_post(m_sem);
     return true;
 }
 
 void MessageQueue::Subscribe(uint32_t type) { m_filters.insert(type); }
 
-std::vector<uint8_t> MessageQueue::Receive() {
-    while (true) {
-        size_t curr_head = m_data->head.load(std::memory_order_relaxed);
-        if (curr_head == m_data->ready_tail.load(std::memory_order_acquire)) {
-            sem_wait(m_sem);
-            continue;
-        }
-
-        size_t offset = curr_head % m_data->max_size;
-        MessageHeader header;
-        std::memcpy(&header, m_buffer + offset, sizeof(header));
-        size_t next_head = curr_head + sizeof(MessageHeader) + header.len;
-
-        if (m_filters.count(header.type)) {
-            std::vector<uint8_t> res(header.len);
-            std::memcpy(res.data(), m_buffer + offset + sizeof(MessageHeader), header.len);
-            m_data->head.store(next_head, std::memory_order_relaxed);
-            return res;
-        }
-        m_data->head.store(next_head, std::memory_order_relaxed);
+std::optional<std::vector<uint8_t>> MessageQueue::Receive() {
+    size_t curr_head = m_data->head.load(std::memory_order_relaxed);
+    if (curr_head == m_data->ready_tail.load(std::memory_order_acquire)) {
+        return std::nullopt;
     }
+
+    size_t offset = curr_head % m_data->max_size;
+    MessageHeader header;
+    std::memcpy(&header, m_buffer + offset, sizeof(header));
+    size_t next_head = curr_head + sizeof(MessageHeader) + header.len;
+
+    if (m_filters.empty() || m_filters.count(header.type)) {
+        std::vector<uint8_t> res(header.len);
+        std::memcpy(res.data(), m_buffer + offset + sizeof(MessageHeader), header.len);
+        m_data->head.store(next_head, std::memory_order_relaxed);
+        return res;
+    }
+    m_data->head.store(next_head, std::memory_order_relaxed);
+    return Receive(); 
 }
 
 MessageQueue::~MessageQueue() {
-    sem_close(m_sem);
     if (m_producer) {
-        sem_unlink(SEM_NAME);
         shm_unlink(SHM_NAME);
     }
     munmap(m_mmap_ptr, m_size);

@@ -5,7 +5,6 @@
 
 constexpr uint32_t PROTOCOL_VERSION = 1;
 constexpr const char* SHM_NAME = "/mpsc_queue_shm";
-constexpr const char* SEM_NAME = "/mpsc_queue_sem";
 
 struct MessageHeader {
     uint32_t type;
